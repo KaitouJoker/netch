@@ -454,20 +454,27 @@ void udpClosed(ENDPOINT_ID id, PNF_UDP_CONN_INFO info)
 
 void udpReceiveHandler(ENDPOINT_ID id, SocksHelper::PUDP remote, PNF_UDP_OPTIONS options)
 {
-	char buffer[1458];
+	auto buffer = new char[65536]();
 
 	while (remote->tcpSocket != INVALID_SOCKET && remote->udpSocket != INVALID_SOCKET)
 	{
 		SOCKADDR_IN6 target;
 
-		int length = remote->Read(&target, buffer, sizeof(buffer), NULL);
-		if (length == 0 || length == SOCKET_ERROR)
+		int length = remote->Read(&target, buffer, 65536, NULL);
+		if (length <= 0)
+		{
+			int err = WSAGetLastError();
+			if (err == WSAEMSGSIZE || err == WSAECONNRESET || err == WSAEINTR || err == WSAEWOULDBLOCK)
+				continue;
+
 			break;
+		}
 
 		DL += length;
 
 		nf_udpPostReceive(id, (unsigned char*)&target, buffer, length, options);
 	}
 
+	delete[] buffer;
 	delete[] options;
 }

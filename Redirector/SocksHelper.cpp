@@ -2,6 +2,10 @@
 
 #include "Utils.h"
 
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+
 extern wstring tgtHost;
 extern wstring tgtPort;
 extern string tgtUsername;
@@ -286,10 +290,8 @@ void SocksHelper::UDP::Run(SOCKET tcpSocket, SOCKET udpSocket)
 
 	while (tcpSocket != INVALID_SOCKET)
 	{
-		if (recv(tcpSocket, buffer, sizeof(buffer), 0) != sizeof(buffer))
-			break;
-
-		if (send(tcpSocket, buffer, sizeof(buffer), 0) != sizeof(buffer))
+		int res = recv(tcpSocket, buffer, sizeof(buffer), 0);
+		if (res <= 0)
 			break;
 	}
 
@@ -372,6 +374,16 @@ bool SocksHelper::UDP::CreateUDP()
 			return false;
 		}
 	}
+
+	// Disable WSAECONNRESET on UDP socket caused by ICMP Port Unreachable
+	BOOL bNewBehavior = FALSE;
+	DWORD dwBytesReturned = 0;
+	WSAIoctl(this->udpSocket, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL);
+
+	// Expand socket buffer sizes to 2MB for high-throughput packet handling
+	int bufSize = 2 * 1024 * 1024;
+	setsockopt(this->udpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bufSize, sizeof(bufSize));
+	setsockopt(this->udpSocket, SOL_SOCKET, SO_SNDBUF, (char*)&bufSize, sizeof(bufSize));
 
 	thread(SocksHelper::UDP::Run, this->tcpSocket, this->udpSocket).detach();
 	return true;
