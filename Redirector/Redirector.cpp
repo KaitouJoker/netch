@@ -178,8 +178,16 @@ extern "C" {
 		return TRUE;
 	}
 
+#pragma comment(lib, "winmm.lib")
+
 	__declspec(dllexport) BOOL __cdecl aio_init()
 	{
+		// Lock Windows multimedia timer resolution to 1ms to eliminate 15.6ms quantum jitter
+		timeBeginPeriod(1);
+
+		// Elevate process priority to prevent packet dispatch stalls during game CPU spikes
+		SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+
 		WSADATA data;
 		if (WSAStartup(MAKEWORD(2, 2), &data) != NO_ERROR)
 		{
@@ -326,6 +334,8 @@ extern "C" {
 
 	__declspec(dllexport) void __cdecl aio_free()
 	{
+		timeEndPeriod(1);
+
 		nf_deleteRules();
 		nf_free();
 		eh_free();

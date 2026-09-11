@@ -362,7 +362,7 @@ void udpCreated(ENDPOINT_ID id, PNF_UDP_CONN_INFO info)
 
 	if (checkBypassName(info->processId))
 	{
-		if (dnsOnly) nf_udpDisableFiltering(id);
+		if (dnsOnly || !filterDNS) nf_udpDisableFiltering(id);
 #ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][udpCreated][" << id << "][" << info->processId << "][checkBypassName] " << GetProcessName(info->processId) << endl;
 #endif
@@ -371,7 +371,7 @@ void udpCreated(ENDPOINT_ID id, PNF_UDP_CONN_INFO info)
 
 	if (!checkHandleName(info->processId))
 	{
-		if (dnsOnly) nf_udpDisableFiltering(id);
+		if (dnsOnly || !filterDNS) nf_udpDisableFiltering(id);
 #ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][udpCreated][" << id << "][" << info->processId << "][!checkHandleName] " << GetProcessName(info->processId) << endl;
 #endif
