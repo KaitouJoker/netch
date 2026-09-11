@@ -31,8 +31,8 @@ extern USHORT tcpListen;
 
 DWORD CurrentID = 0;
 
-mutex udpContextLock;
-map<ENDPOINT_ID, SocksHelper::PUDP> udpContext;
+static SRWLOCK udpContextLock = SRWLOCK_INIT;
+static unordered_map<ENDPOINT_ID, SocksHelper::PUDP> udpContext;
 
 atomic_ullong UP = { 0 };
 atomic_ullong DL = { 0 };
@@ -200,13 +200,15 @@ bool eh_init()
 
 void eh_free()
 {
-	lock_guard<mutex> lg(udpContextLock);
+	AcquireSRWLockExclusive(&udpContextLock);
 
 	TCPHandler::FREE();
 
-	for (auto i : udpContext)
+	for (auto& i : udpContext)
 		delete i.second;
 	udpContext.clear();
+
+	ReleaseSRWLockExclusive(&udpContextLock);
 
 	ClearPIDCache();
 
@@ -235,32 +237,36 @@ void tcpConnectRequest(ENDPOINT_ID id, PNF_TCP_CONN_INFO info)
 	if (!filterTCP)
 	{
 		nf_tcpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][tcpConnectRequest][" << id << "][" << info->processId << "][!filterTCP] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
 	if (checkBypassName(info->processId))
 	{
 		nf_tcpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][tcpConnectRequest][" << id << "][" << info->processId << "][checkBypassName] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
 	if (!checkHandleName(info->processId))
 	{
 		nf_tcpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][tcpConnectRequest][" << id << "][" << info->processId << "][!checkHandleName] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
 	if (info->ip_family != AF_INET && info->ip_family != AF_INET6)
 	{
 		nf_tcpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][tcpConnectRequest][" << id << "][" << info->processId << "][!IPv4 && !IPv6] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
@@ -286,12 +292,19 @@ void tcpConnectRequest(ENDPOINT_ID id, PNF_TCP_CONN_INFO info)
 	}
 
 	TCPHandler::CreateHandler(client, remote);
+#ifdef _DEBUG
 	wcout << "[Redirector][EventHandler][tcpConnectRequest][" << id << "][" << info->processId << "] " << ConvertIP((PSOCKADDR)&client) << " -> " << ConvertIP((PSOCKADDR)&remote) << endl;
+#endif
 }
 
 void tcpConnected(ENDPOINT_ID id, PNF_TCP_CONN_INFO info)
 {
+#ifdef _DEBUG
 	wcout << "[Redirector][EventHandler][tcpConnected][" << id << "][" << info->processId << "][" << ConvertIP((PSOCKADDR)info->remoteAddress) << "] " << GetProcessName(info->processId) << endl;
+#else
+	UNREFERENCED_PARAMETER(id);
+	UNREFERENCED_PARAMETER(info);
+#endif
 }
 
 void tcpCanSend(ENDPOINT_ID id)
@@ -320,12 +333,14 @@ void tcpReceive(ENDPOINT_ID id, const char* buffer, int length)
 
 void tcpClosed(ENDPOINT_ID id, PNF_TCP_CONN_INFO info)
 {
+	UNREFERENCED_PARAMETER(id);
 	SOCKADDR_IN6 client;
 	memcpy(&client, info->localAddress, sizeof(SOCKADDR_IN6));
 
 	TCPHandler::DeleteHandler(client);
-
+#ifdef _DEBUG
 	printf("[Redirector][EventHandler][tcpClosed][%llu][%lu]\n", id, info->processId);
+#endif
 }
 
 void udpCreated(ENDPOINT_ID id, PNF_UDP_CONN_INFO info)
@@ -339,31 +354,38 @@ void udpCreated(ENDPOINT_ID id, PNF_UDP_CONN_INFO info)
 	if (!filterUDP)
 	{
 		if (!filterDNS) nf_udpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][udpCreated][" << id << "][" << info->processId << "][!filterUDP] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
 	if (checkBypassName(info->processId))
 	{
 		if (dnsOnly) nf_udpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][udpCreated][" << id << "][" << info->processId << "][checkBypassName] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
 	if (!checkHandleName(info->processId))
 	{
 		if (dnsOnly) nf_udpDisableFiltering(id);
-
+#ifdef _DEBUG
 		wcout << "[Redirector][EventHandler][udpCreated][" << id << "][" << info->processId << "][!checkHandleName] " << GetProcessName(info->processId) << endl;
+#endif
 		return;
 	}
 
+#ifdef _DEBUG
 	wcout << "[Redirector][EventHandler][udpCreated][" << id << "][" << info->processId << "] " << GetProcessName(info->processId) << endl;
+#endif
 
-	lock_guard<mutex> lg(udpContextLock);
-	udpContext[id] = new SocksHelper::UDP();
+	auto newUdp = new SocksHelper::UDP();
+	AcquireSRWLockExclusive(&udpContextLock);
+	udpContext[id] = newUdp;
+	ReleaseSRWLockExclusive(&udpContextLock);
 }
 
 void udpConnectRequest(ENDPOINT_ID id, PNF_UDP_CONN_REQUEST info)
@@ -384,30 +406,32 @@ void udpSend(ENDPOINT_ID id, const unsigned char* target, const char* buffer, in
 		if (!filterDNS)
 		{
 			nf_udpPostSend(id, target, buffer, length, options);
-
+#ifdef _DEBUG
 			wcout << "[Redirector][EventHandler][udpSend][" << id << "] B DNS to " << ConvertIP((PSOCKADDR)target) << endl;
+#endif
 			return;
 		}
 		else
 		{
 			UP += length;
 			DNSHandler::CreateHandler(id, (PSOCKADDR_IN6)target, buffer, length, options);
-
+#ifdef _DEBUG
 			wcout << "[Redirector][EventHandler][udpSend][" << id << "] H DNS to " << ConvertIP((PSOCKADDR)target) << endl;
+#endif
 			return;
 		}
 	}
 
-	udpContextLock.lock();
-	if (udpContext.find(id) == udpContext.end())
+	AcquireSRWLockShared(&udpContextLock);
+	auto it = udpContext.find(id);
+	if (it == udpContext.end())
 	{
-		udpContextLock.unlock();
-
+		ReleaseSRWLockShared(&udpContextLock);
 		nf_udpPostSend(id, target, buffer, length, options);
 		return;
 	}
-	auto remote = udpContext[id];
-	udpContextLock.unlock();
+	auto remote = it->second;
+	ReleaseSRWLockShared(&udpContextLock);
 
 	if (remote->tcpSocket == INVALID_SOCKET && !remote->Associate())
 		return;
@@ -441,14 +465,22 @@ void udpClosed(ENDPOINT_ID id, PNF_UDP_CONN_INFO info)
 {
 	UNREFERENCED_PARAMETER(info);
 
+#ifdef _DEBUG
 	printf("[Redirector][EventHandler][udpClosed][%llu]\n", id);
+#endif
 
-	lock_guard<mutex> lg(udpContextLock);
-	if (udpContext.find(id) != udpContext.end())
+	AcquireSRWLockExclusive(&udpContextLock);
+	auto it = udpContext.find(id);
+	if (it != udpContext.end())
 	{
-		delete udpContext[id];
-
-		udpContext.erase(id);
+		auto remote = it->second;
+		udpContext.erase(it);
+		ReleaseSRWLockExclusive(&udpContextLock);
+		delete remote;
+	}
+	else
+	{
+		ReleaseSRWLockExclusive(&udpContextLock);
 	}
 }
 
