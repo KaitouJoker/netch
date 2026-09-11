@@ -11,7 +11,21 @@ extern bool filterDNS;
 extern bool dnsOnly;
 
 extern vector<wstring> bypassList;
+extern vector<wregex> compiledBypassList;
 extern vector<wstring> handleList;
+extern vector<wregex> compiledHandleList;
+
+static SRWLOCK pidCacheLock = SRWLOCK_INIT;
+static unordered_map<DWORD, bool> pidHandleCache;
+static unordered_map<DWORD, bool> pidBypassCache;
+
+void ClearPIDCache()
+{
+	AcquireSRWLockExclusive(&pidCacheLock);
+	pidHandleCache.clear();
+	pidBypassCache.clear();
+	ReleaseSRWLockExclusive(&pidCacheLock);
+}
 
 extern USHORT tcpListen;
 
@@ -72,71 +86,103 @@ wstring GetProcessName(DWORD id)
 
 bool checkBypassName(DWORD id)
 {
-	auto name = GetProcessName(id);
+	if (id == 0 || id == 4)
+		return false;
 
-	for (size_t i = 0; i < bypassList.size(); i++)
+	AcquireSRWLockShared(&pidCacheLock);
+	auto it = pidBypassCache.find(id);
+	if (it != pidBypassCache.end())
 	{
-		if (regex_search(name, wregex(bypassList[i])))
+		bool result = it->second;
+		ReleaseSRWLockShared(&pidCacheLock);
+		return result;
+	}
+	ReleaseSRWLockShared(&pidCacheLock);
+
+	auto name = GetProcessName(id);
+	bool matched = false;
+
+	for (size_t i = 0; i < compiledBypassList.size(); i++)
+	{
+		if (regex_search(name, compiledBypassList[i]))
 		{
-			return true;
+			matched = true;
+			break;
 		}
 	}
 
-	return false;
+	AcquireSRWLockExclusive(&pidCacheLock);
+	pidBypassCache[id] = matched;
+	ReleaseSRWLockExclusive(&pidCacheLock);
+
+	return matched;
 }
 
 bool checkHandleName(DWORD id)
 {
-	{
-		auto name = GetProcessName(id);
+	if (id == 0 || id == 4)
+		return false;
 
-		for (size_t i = 0; i < handleList.size(); i++)
+	AcquireSRWLockShared(&pidCacheLock);
+	auto it = pidHandleCache.find(id);
+	if (it != pidHandleCache.end())
+	{
+		bool result = it->second;
+		ReleaseSRWLockShared(&pidCacheLock);
+		return result;
+	}
+	ReleaseSRWLockShared(&pidCacheLock);
+
+	auto name = GetProcessName(id);
+	bool matched = false;
+
+	for (size_t i = 0; i < compiledHandleList.size(); i++)
+	{
+		if (regex_search(name, compiledHandleList[i]))
 		{
-			if (regex_search(name, wregex(handleList[i])))
-			{
-				return true;
-			}
+			matched = true;
+			break;
 		}
 	}
 
-	if (filterParent)
+	if (!matched && filterParent)
 	{
 		PROCESSENTRY32W PE;
 		memset(&PE, 0, sizeof(PROCESSENTRY32W));
 		PE.dwSize = sizeof(PROCESSENTRY32W);
 
 		auto hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-		if (hSnapshot == INVALID_HANDLE_VALUE)
+		if (hSnapshot != INVALID_HANDLE_VALUE)
 		{
-			return false;
-		}
-
-		if (!Process32FirstW(hSnapshot, &PE))
-		{
-			CloseHandle(hSnapshot);
-			return false;
-		}
-
-		do {
-			if (PE.th32ProcessID == id)
+			if (Process32FirstW(hSnapshot, &PE))
 			{
-				auto name = GetProcessName(PE.th32ParentProcessID);
-
-				for (size_t i = 0; i < handleList.size(); i++)
-				{
-					if (regex_search(name, wregex(handleList[i])))
+				do {
+					if (PE.th32ProcessID == id)
 					{
-						CloseHandle(hSnapshot);
-						return true;
-					}
-				}
-			}
-		} while (Process32NextW(hSnapshot, &PE));
+						auto parentName = GetProcessName(PE.th32ParentProcessID);
 
-		CloseHandle(hSnapshot);
+						for (size_t i = 0; i < compiledHandleList.size(); i++)
+						{
+							if (regex_search(parentName, compiledHandleList[i]))
+							{
+								matched = true;
+								break;
+							}
+						}
+						break;
+					}
+				} while (Process32NextW(hSnapshot, &PE));
+			}
+
+			CloseHandle(hSnapshot);
+		}
 	}
 
-	return false;
+	AcquireSRWLockExclusive(&pidCacheLock);
+	pidHandleCache[id] = matched;
+	ReleaseSRWLockExclusive(&pidCacheLock);
+
+	return matched;
 }
 
 bool eh_init()
@@ -161,6 +207,8 @@ void eh_free()
 	for (auto i : udpContext)
 		delete i.second;
 	udpContext.clear();
+
+	ClearPIDCache();
 
 	UP = 0;
 	DL = 0;

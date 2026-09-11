@@ -21,4 +21,6 @@ string tgtUsername = "";
 string tgtPassword = "";
 
 vector<wstring> bypassList;
+vector<wregex> compiledBypassList;
 vector<wstring> handleList;
+vector<wregex> compiledHandleList;

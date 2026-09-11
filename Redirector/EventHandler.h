@@ -6,6 +6,7 @@
 
 bool eh_init();
 void eh_free();
+void ClearPIDCache();
 
 void threadStart();
 void threadEnd();

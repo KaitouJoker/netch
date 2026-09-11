@@ -24,7 +24,10 @@ extern string tgtUsername;
 extern string tgtPassword;
 
 extern vector<wstring> bypassList;
+extern vector<wregex> compiledBypassList;
 extern vector<wstring> handleList;
+extern vector<wregex> compiledHandleList;
+void ClearPIDCache();
 
 extern atomic_ullong UP;
 extern atomic_ullong DL;
@@ -141,29 +144,32 @@ extern "C" {
 			break;
 		case AIO_CLRNAME:
 			bypassList.clear();
+			compiledBypassList.clear();
 			handleList.clear();
+			compiledHandleList.clear();
+			ClearPIDCache();
 			break;
 		case AIO_BYPNAME:
 			try
 			{
-				std::wregex checker(value);
+				compiledBypassList.emplace_back(value, std::regex_constants::optimize);
+				bypassList.emplace_back(value);
+				ClearPIDCache();
 			}
-			catch (regex_error) {
+			catch (const regex_error&) {
 				return FALSE;
 			}
-
-			bypassList.emplace_back(value);
 			break;
 		case AIO_ADDNAME:
 			try
 			{
-				std::wregex checker(value);
+				compiledHandleList.emplace_back(value, std::regex_constants::optimize);
+				handleList.emplace_back(value);
+				ClearPIDCache();
 			}
-			catch (regex_error) {
+			catch (const regex_error&) {
 				return FALSE;
 			}
-
-			handleList.emplace_back(value);
 			break;
 		default:
 			return FALSE;
