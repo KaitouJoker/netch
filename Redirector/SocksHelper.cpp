@@ -31,6 +31,15 @@ SOCKET SocksHelper::Connect()
 		}
 	}
 
+	// Disable Nagle's Algorithm to eliminate 40ms~200ms Delayed ACK frame stuttering
+	int nodelay = 1;
+	setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
+
+	// Expand socket buffers to 2MB to prevent TCP window stalls
+	int bufSize = 2 * 1024 * 1024;
+	setsockopt(client, SOL_SOCKET, SO_RCVBUF, (char*)&bufSize, sizeof(bufSize));
+	setsockopt(client, SOL_SOCKET, SO_SNDBUF, (char*)&bufSize, sizeof(bufSize));
+
 	timeval timeout{};
 	timeout.tv_sec = 4;
 
