@@ -385,34 +385,45 @@ int SocksHelper::UDP::Send(PSOCKADDR_IN6 target, const char* buffer, int length)
 	if (target->sin6_family != AF_INET && target->sin6_family != AF_INET6)
 		return SOCKET_ERROR;
 
-	auto data = new char[3 + 1 + 16 + 2 + (ULONG64)length]();
-	data[3] = (target->sin6_family == AF_INET) ? 0x01 : 0x04;
+	const int headerLen = (target->sin6_family == AF_INET) ? 10 : 22;
+	const int totalLen = headerLen + length;
+
+	char stackBuf[2048];
+	char* data = (totalLen <= sizeof(stackBuf)) ? stackBuf : new char[totalLen];
+
+	data[0] = 0;
+	data[1] = 0;
+	data[2] = 0; // FRAG
 
 	if (target->sin6_family == AF_INET)
 	{
+		data[3] = 0x01; // IPv4
 		auto ipv4 = (PSOCKADDR_IN)target;
-
 		memcpy(data + 4, &ipv4->sin_addr, 4);
 		memcpy(data + 8, &ipv4->sin_port, 2);
 	}
 	else
 	{
+		data[3] = 0x04; // IPv6
 		memcpy(data + 4, &target->sin6_addr, 16);
 		memcpy(data + 20, &target->sin6_port, 2);
 	}
 
-	memcpy(data + 3 + 1 + (target->sin6_family == AF_INET ? 4 : 16) + 2, buffer, length);
-	auto dataLength = 3 + 1 + (target->sin6_family == AF_INET ? 4 : 16) + 2 + length;
+	memcpy(data + headerLen, buffer, length);
 
-	if (sendto(this->udpSocket, data, dataLength, 0, (PSOCKADDR)&this->address, (this->address.sin6_family == AF_INET ? sizeof(SOCKADDR_IN) : sizeof(SOCKADDR_IN6))) != dataLength)
-	{
+	int sent = sendto(this->udpSocket, data, totalLen, 0, (PSOCKADDR)&this->address, (this->address.sin6_family == AF_INET ? sizeof(SOCKADDR_IN) : sizeof(SOCKADDR_IN6)));
+
+	if (data != stackBuf)
 		delete[] data;
 
+	if (sent != totalLen)
+	{
+#ifdef _DEBUG
 		printf("[Redirector][SocksHelper::UDP::Send] Send packet failed: %d\n", WSAGetLastError());
+#endif
 		return SOCKET_ERROR;
 	}
 
-	delete[] data;
 	return length;
 }
 
